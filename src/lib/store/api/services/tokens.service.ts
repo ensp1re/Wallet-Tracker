@@ -18,7 +18,9 @@ export const tokensApi = baseApi.injectEndpoints({
       }),
     }),
     getNftBalance: build.query<
-      { balance: number },
+      {
+          nfts: never[]; balance: number 
+},
       { address: string | undefined; network: string | undefined }
     >({
       query: ({ address, network }) => ({

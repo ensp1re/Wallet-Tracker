@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
@@ -6,13 +7,12 @@ import { ProfileCard } from "@/components/profile-card"
 // import { TokenCard } from "@/components/token-card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import TransactionList from "@/components/TransactionList"
-import { mockTransactions } from "@/constants/constants"
 import WalletTable, { Token } from "@/components/WalletTable"
 import { TokenCard } from "@/components/token-card"
-import { useGetTokensQuery } from "@/lib/store/api/services/tokens.service"
+import { useGetNftBalanceQuery, useGetTokensQuery } from "@/lib/store/api/services/tokens.service"
 import { useAuth } from "@/hooks/useAuth"
 import { checkIfCorrectAddress, shortenAddress } from "@/lib/utils"
-import { BalanceItem } from "@covalenthq/client-sdk"
+import { BalanceItem, NftTokenContractBalanceItem } from "@covalenthq/client-sdk"
 import { Button } from "@/components/ui/button"
 import { Search } from "lucide-react"
 import { Input } from "@/components/ui/input"
@@ -20,6 +20,10 @@ import { useSearchParams } from "react-router-dom"
 import toast from "react-hot-toast"
 import { v4 as uuidV4 } from "uuid"
 import { useTranslation } from "react-i18next"
+import { NFTCard } from "@/components/NftCard"
+import { useGetTransactionsQuery } from "@/lib/store/api/services/transactions.service"
+import { Transaction as tSdk } from "@covalenthq/client-sdk";
+import { Transaction } from "@/components/TransactionList"
 
 
 export default function Dashboard() {
@@ -28,6 +32,9 @@ export default function Dashboard() {
     const [totalBalance, setTotalBalance] = useState<number>(0);
     const [totalChange, setTotalChange] = useState<number>(0);
     const [addressToCheck, setAddressToCheck] = useState<string | null>(null);
+    const [nfts, setNfts] = useState<tSdk[]>([]);
+    const [transactionData, setTransactionData] = useState<Transaction[]>([]);
+    const [totalItems, setTotalItems] = useState<number>(0);
 
     const { t } = useTranslation();
 
@@ -66,6 +73,20 @@ export default function Dashboard() {
         skip: !addressToCheck
     });
 
+    const { data: nftsData, isLoading: isNftLoading } = useGetNftBalanceQuery({ address: addressToCheck as string, network: network }, {
+        skip: !addressToCheck
+    })
+
+    const [page, setPage] = useState<number>(1);
+
+
+    const { data: transactionsData, isLoading: isTransactionLoading } = useGetTransactionsQuery({ address: addressToCheck as string, network: network, page }, {
+        skip: !addressToCheck
+    });
+
+    console.log(transactionsData);
+
+
     const toBeautifulData = useCallback(async (token: BalanceItem): Promise<Token> => {
         return {
             symbol: token.contract_ticker_symbol?.toUpperCase() as string,
@@ -78,6 +99,29 @@ export default function Dashboard() {
         }
     }, [network]);
 
+    const toBeautifulNftData = useCallback(async (nft: NftTokenContractBalanceItem): Promise<any | null> => {
+        return {
+            name: nft.contract_name,
+            symbol: nft.contract_ticker_symbol,
+            network: network as string === "eth-mainnet" ? "Ethereum" : "Sepolia",
+            token_contract: nft.contract_address,
+            image: nft.nft_data && nft.nft_data[0] ? nft.nft_data[0].external_data?.image_256 : "/placeholder.svg"
+        }
+    }, [network]);
+
+
+    const toBeautifulTransactionData = useCallback(async (transaction: tSdk): Promise<Transaction> => {
+        return {
+            tx_hash: transaction.tx_hash ?? "",
+            block_signed_at: transaction.block_signed_at?.toString() ?? "",
+            from_address: transaction.from_address ?? "",
+            to_address: transaction.to_address ?? "",
+            value: transaction.value?.toString() ?? "",
+            fees_paid: transaction.fees_paid?.toString() ?? "",
+            gas_quote: transaction.gas_quote ?? 0,
+            gas_quote_rate: transaction.gas_quote_rate ?? 0
+        }
+    }, []);
 
 
     useEffect(() => {
@@ -93,12 +137,34 @@ export default function Dashboard() {
                 setTokens(beautifulData);
                 setTotalBalance(parseFloat(tokensData.totalCost.toFixed(2)));
                 setTotalChange(parseFloat(calculateTotalChangeInPercent(filteredData)));
-                console.log(filteredData);
             };
 
             fetchData();
         }
     }, [toBeautifulData, tokensData]);
+
+    useEffect(() => {
+        if (transactionsData) {
+            const fetchTransactionData = async () => {
+                const beautifulTransactionData = await Promise.all(transactionsData.transactions.map((transaction: tSdk) => toBeautifulTransactionData(transaction)));
+                setTransactionData(beautifulTransactionData as Transaction[] || []);
+                setTotalItems(transactionsData.total);
+            };
+            fetchTransactionData();
+        }
+    }, [toBeautifulTransactionData, transactionsData, page]);
+
+
+    useEffect(() => {
+        if (nftsData) {
+            const fetchNftData = async () => {
+                const beautifulNftData = await Promise.all(nftsData.nfts.map((nft: NftTokenContractBalanceItem) => toBeautifulNftData(nft)));
+                setNfts(beautifulNftData || []);
+                console.log(nftsData);
+            };
+            fetchNftData();
+        }
+    }, [nftsData, toBeautifulNftData]);
 
     const checkUrlResponse = async (url: string): Promise<boolean> => {
         try {
@@ -113,6 +179,7 @@ export default function Dashboard() {
 
 
 
+    const loading = isNftLoading || isTokenLoading || isTransactionLoading;
 
 
     const tokensInNetworkTotal = [
@@ -173,12 +240,12 @@ export default function Dashboard() {
 
                         <ProfileCard address={
                             addressToCheck ? shortenAddress(addressToCheck as string) : "0x"
-                        } balance={totalBalance} change={totalChange ? `${totalChange}%` : ''} loading={isTokenLoading} />
+                        } balance={totalBalance} change={totalChange ? `${totalChange}%` : ''} loading={loading} />
 
                         <div className="flex gap-3 items-center mt-8">
                             {
                                 tokensInNetworkTotal.map((token) => (
-                                    <TokenCard key={uuidV4()} {...token} isLoading={isTokenLoading} />
+                                    <TokenCard key={uuidV4()} {...token} isLoading={loading} />
                                 ))
                             }
                         </div>
@@ -193,25 +260,18 @@ export default function Dashboard() {
                                 <TabsTrigger value="transactions">Transactions</TabsTrigger>
                             </TabsList>
                             <TabsContent value="portfolio" className="mt-6">
-                                {/* <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                            {tokens.map((token) => (
-                                <TokenCard key={token.symbol} {...token} />
-                            ))}
-                        </div> */}
-                                <WalletTable tokens={tokens ?? []} totalValue={totalBalance} loading={isTokenLoading} />
+                                <WalletTable tokens={tokens ?? []} totalValue={totalBalance} loading={loading} />
                             </TabsContent>
                             <TabsContent value="nfts">
                                 <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                                    {/* {nfts.map((nft) => (
-                                <NFTCard key={nft.id} {...nft} />
-                            ))} */}
-                                    Nfts go heres
+                                    {nfts.map((nft: any) => (
+                                        <NFTCard key={uuidV4()} {...nft} />
+                                    ))}
                                 </div>
                             </TabsContent>
                             <TabsContent value="transactions">
                                 <TransactionList
-                                    transactions={mockTransactions}
-                                />
+                                    transactions={transactionData as Transaction[]} page={page} setPage={setPage} addressToCheck={addressToCheck} totalItems={totalItems} />
                             </TabsContent>
                         </Tabs>
                     </div>
